@@ -1,5 +1,5 @@
 /**
- * WhatsApp Bot - Portfolio Architecture Showcase
+ * WhatsApp Bot 
  * Platform: Cloudflare Workers
  * Features:
  * - Omnichannel Architecture (WhatsApp API <-> Telegram Forums Handoff)
