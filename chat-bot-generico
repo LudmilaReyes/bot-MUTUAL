@@ -1,0 +1,477 @@
+/**
+ * WhatsApp Bot - Portfolio Architecture Showcase
+ * Platform: Cloudflare Workers
+ * Features:
+ * - Omnichannel Architecture (WhatsApp API <-> Telegram Forums Handoff)
+ * - State Machine & Memory via Cloudflare KV
+ * - SQL Logging via Cloudflare D1 (SQLite)
+ * - Defensive Media Proxy for Webhooks
+ * - HMAC SHA-256 Meta Signature Verification
+ */
+
+// ==========================================
+// 1. CONFIGURACIÓN DE ACTIVOS Y CONSTANTES (DUMMY DATA)
+// ==========================================
+const DOMINIO_BOT = "https://bot.tudominio.com";
+const GALERIA_URL = "https://tudominio.com/galeria/";
+
+const RECURSOS_PROYECTO_A = {
+  portada: `${DOMINIO_BOT}/media/proyecto-a-portada.jpg`,
+  modeloImg1: "https://dummyimage.com/600x400/000/fff&text=Modelo+Premium",
+  modeloImg2: "https://dummyimage.com/600x400/000/fff&text=Avance+Obra",
+  reglamentoPdf: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+  planoImg: "https://dummyimage.com/600x400/000/fff&text=Plano+Proyecto",
+  coordenadas: {
+    latitud: -34.603722,
+    longitud: -58.381592,
+    nombre: "Proyecto Residencial Alpha",
+    direccion: "Av. Principal 123, Ciudad, País"
+  }
+};
+
+const RECURSOS_PROYECTO_B = {
+  portada: "https://dummyimage.com/600x400/000/fff&text=Proyecto+Beta",
+  planoImg: "https://dummyimage.com/600x400/000/fff&text=Plano+Lotes",
+  coordenadas: {
+    latitud: -34.6118,
+    longitud: -58.4173,
+    nombre: "Desarrollo Beta",
+    direccion: "Ruta Nacional 7, Km 45"
+  }
+};
+
+// Mapeo seguro para el proxy defensivo
+const ORIGEN_MEDIOS = {
+  '/media/proyecto-a-portada.jpg': 'https://dummyimage.com/600x400/2c3e50/fff&text=Portada+Segura'
+};
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+
+    // Endpoint Proxy: Evita exponer URLs finales y fuerza cabeceras seguras
+    if (url.pathname.startsWith('/media/')) {
+      return handleMediaProxy(url.pathname);
+    }
+
+    // Health check para monitoreo
+    if (url.pathname === '/' || url.pathname === '') {
+      return new Response('🟢 WhatsApp Bot - Worker Online y Operativo', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+      });
+    }
+
+    // Webhooks WhatsApp / Meta
+    if (request.method === 'GET') {
+      return handleVerify(request, env);
+    }
+    if (request.method === 'POST') {
+      return handleIncoming(request, env, ctx);
+    }
+
+    return new Response('Método no permitido', { status: 405 });
+  },
+};
+
+// ==========================================
+// 2. PROXY MULTIMEDIA DEFENSIVO
+// ==========================================
+async function handleMediaProxy(pathname) {
+  const urlOrigen = ORIGEN_MEDIOS[pathname];
+  if (!urlOrigen) return new Response('Recurso no configurado', { status: 404 });
+
+  try {
+    const respuesta = await fetch(urlOrigen);
+    if (!respuesta.ok) return new Response(`Error: ${respuesta.status}`, { status: 502 });
+
+    const headers = new Headers();
+    headers.set('Content-Type', 'image/jpeg');
+    headers.set('Cache-Control', 'public, max-age=86400');
+    headers.set('Access-Control-Allow-Origin', '*');
+
+    return new Response(respuesta.body, { status: 200, headers: headers });
+  } catch (error) {
+    console.error(`[PROXY ERROR] Fallo al despachar ${pathname}:`, error.message);
+    return new Response('Error en proxy', { status: 500 });
+  }
+}
+
+// ==========================================
+// 3. VERIFICACIÓN Y SEGURIDAD (HMAC SHA-256)
+// ==========================================
+function handleVerify(request, env) {
+  const url = new URL(request.url);
+  const mode = url.searchParams.get('hub.mode');
+  const token = url.searchParams.get('hub.verify_token');
+  const challenge = url.searchParams.get('hub.challenge');
+
+  if (mode === 'subscribe' && token === env.VERIFY_TOKEN) {
+    return new Response(challenge, { status: 200 });
+  }
+  return new Response('Error de verificación', { status: 403 });
+}
+
+async function verificarFirmaMeta(request, bodyTexto, env) {
+  const signature = request.headers.get('X-Hub-Signature-256');
+  if (!signature || !env.META_APP_SECRET) return true; // Bypass si no hay secreto en dev
+
+  try {
+    const encoder = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+      "raw", encoder.encode(env.META_APP_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+    );
+    const signatureBuffer = await crypto.subtle.sign("HMAC", keyMaterial, encoder.encode(bodyTexto));
+    const hashHex = Array.from(new Uint8Array(signatureBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    return signature === `sha256=${hashHex}`;
+  } catch (err) {
+    console.error("[SECURITY] Error verificando firma:", err);
+    return false;
+  }
+}
+
+// ==========================================
+// 4. RECEPCIÓN Y ENRUTAMIENTO OMNICANAL
+// ==========================================
+async function handleIncoming(request, env, ctx) {
+  try {
+    const bodyTexto = await request.clone().text();
+    const data = JSON.parse(bodyTexto);
+
+    // Flujo A: Respuesta desde Telegram (Operador Humano)
+    if (data.update_id) {
+      const tokenSecreto = request.headers.get('X-Telegram-Bot-Api-Secret-Token');
+      if (env.TELEGRAM_SECRET && tokenSecreto !== env.TELEGRAM_SECRET) {
+        return new Response('No autorizado', { status: 401 });
+      }
+      ctx.waitUntil(procesarMensajeTelegram(data, env));
+      return new Response('OK', { status: 200 });
+    }
+
+    // Flujo B: Mensaje entrante desde WhatsApp
+    const esValido = await verificarFirmaMeta(request, bodyTexto, env);
+    if (!esValido) return new Response('Firma inválida', { status: 401 });
+
+    const mensaje = data?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+    if (!mensaje) return new Response('OK', { status: 200 });
+
+    ctx.waitUntil(procesarMensaje(mensaje, env));
+    return new Response('OK', { status: 200 });
+  } catch (err) {
+    console.error('[FATAL ERROR]:', err);
+    return new Response('OK', { status: 200 });
+  }
+}
+
+// ==========================================
+// 5. MÁQUINA DE ESTADOS (STATE MACHINE)
+// ==========================================
+async function procesarMensaje(mensaje, env) {
+  const telefono = mensaje.from;
+
+  try {
+    const memoria = await obtenerMemoriaUsuario(telefono, env) || {};
+    const estadoActual = memoria.paso || null;
+    const textoEscape = mensaje.type === 'text' ? (mensaje.text?.body || '').trim().toLowerCase() : '';
+
+    // Comandos globales de escape
+    if (['reset', 'salir', 'menu', 'menú'].includes(textoEscape)) {
+      await limpiarMemoria(telefono, env);
+      await enviarMenuPrincipal(telefono, env);
+      if (estadoActual === 'modo_humano' && memoria.hiloTelegram) {
+        await enviarATelegram(`🚨 *El usuario \`${telefono}\` cerró la sesión.*`, memoria.hiloTelegram, env);
+        await cerrarHiloTelegram(memoria.hiloTelegram, env);
+      }
+      return; 
+    }
+
+    // Hand-off logic (Derivación Humana activa)
+    if (estadoActual === 'modo_humano') {
+      if (mensaje.type === 'interactive' && mensaje.interactive?.type === 'list_reply') {
+        if (memoria.hiloTelegram) {
+          await enviarATelegram(`🔀 *Usuario salió al menú.* Seleccionó: *${mensaje.interactive.list_reply.title}*`, memoria.hiloTelegram, env);
+          await cerrarHiloTelegram(memoria.hiloTelegram, env);
+        }
+        await limpiarMemoria(telefono, env);
+        await manejarMenuInteractivo(telefono, mensaje.interactive.list_reply.id, env);
+        return;
+      }
+      const textoUsuario = mensaje.type === 'text' ? mensaje.text.body : '[Archivo recibido]';
+      await reenviarMensajeUsuarioATelegram(telefono, textoUsuario, memoria.hiloTelegram, env);
+      return;
+    }
+
+    // Enrutamiento normal basado en tipo de mensaje
+    if (mensaje.type === 'text') {
+      await manejarEstadoTexto(telefono, mensaje.text?.body?.trim() || '', estadoActual, memoria, env);
+    } else if (mensaje.type === 'interactive' && mensaje.interactive?.type === 'list_reply') {
+      await manejarMenuInteractivo(telefono, mensaje.interactive.list_reply.id, env);
+    } else {
+      await enviarTexto(telefono, '⚠️ Selecciona una opción del menú o escribe *menu* para reiniciar.', env);
+    }
+  } catch (error) {
+    console.error(`[ERROR] Procesando mensaje:`, error);
+    await registrarLog(telefono, 'error_sistema', error.message, env);
+  }
+}
+
+async function manejarEstadoTexto(telefono, textoUsuario, estado, memoria, env) {
+  if (!estado) {
+    await enviarMenuPrincipal(telefono, env);
+    return;
+  }
+
+  // Ejemplo de recolección de Leads
+  if (estado === 'esperando_nombre_lead') {
+    if (textoUsuario.length < 3 || /^[0-9.\s]+$/.test(textoUsuario)) {
+      await enviarTexto(telefono, '⚠️ Por favor, ingresa un nombre válido usando letras:', env);
+      return;
+    }
+
+    const areaInteres = memoria.areaConsulta || 'Consulta General';
+    const detalleLead = 
+      `👤 *Nuevo Lead:* ${textoUsuario}\n` +
+      `🎯 *Interés:* ${areaInteres}\n` +
+      `🧭 *Recorrido:* ${memoria.historial?.join(' > ') || 'Directo'}`;
+
+    await derivarAAsesor(telefono, areaInteres, detalleLead, env);
+    await registrarLog(telefono, 'lead_capturado', `${areaInteres} - ${textoUsuario}`, env);
+  }
+}
+
+// ==========================================
+// 6. ENRUTADOR DE MENÚS (INTERACTIVE MESSAGING)
+// ==========================================
+async function manejarMenuInteractivo(telefono, id, env) {
+  await registrarLog(telefono, 'seleccion_menu', id, env);
+
+  switch (id) {
+    case 'volver_inicio':
+      await limpiarMemoria(telefono, env);
+      await enviarMenuPrincipal(telefono, env);
+      break;
+
+    case 'menu_proyectos':
+      await registrarPasoHistorial(telefono, "Vio listado de proyectos", env);
+      await enviarMenuLista(
+        telefono, "Nuestros Proyectos", "Elige el proyecto que deseas conocer:", "Ver Proyectos 🏘️", "Portafolio Inmobiliario",
+        [
+          { id: "proyecto_alpha", title: "📍 Proyecto Alpha", description: "Casas y Dúplex Premium" },
+          { id: "proyecto_beta", title: "📍 Proyecto Beta", description: "Lotes en barrio privado" },
+          { id: "volver_inicio", title: "🔙 Volver al Inicio" }
+        ], env
+      );
+      break;
+
+    // --- FLUJO PROYECTO ALPHA (Casas / PDF / Galerías) ---
+    case 'proyecto_alpha':
+      await registrarPasoHistorial(telefono, "Exploró Proyecto Alpha", env);
+      await enviarImagen(telefono, RECURSOS_PROYECTO_A.portada, "🏢 *Proyecto Alpha*\nOpciones llave en mano con amenidades premium.", env);
+      await enviarMenuLista(
+        telefono, "Proyecto Alpha", "Explora los detalles:", "Ver Opciones 📋", "Menú Alpha",
+        [
+          { id: "alpha_modelos", title: "🏡 Modelos Construidos", description: "Ver tipologías de vivienda" },
+          { id: "alpha_planos", title: "📄 Planos y Reglamento", description: "Descargar documentación" },
+          { id: "alpha_asesor", title: "🙋 Agendar Visita", description: "Hablar con un asesor comercial" },
+          { id: "menu_proyectos", title: "🔙 Otros Proyectos" }
+        ], env
+      );
+      break;
+
+    case 'alpha_modelos':
+      await enviarTexto(telefono, "🏘️ *Modelo Premium*\nDiseñado para el confort. 3 Habitaciones, 2 baños.", env);
+      await enviarImagen(telefono, RECURSOS_PROYECTO_A.modeloImg1, "Exterior Modelo Premium", env);
+      await enviarBotonEnlace(telefono, "Ver galería interactiva del proyecto:", "Ver Galería 📸", GALERIA_URL, env);
+      break;
+
+    case 'alpha_planos':
+      await enviarDocumento(telefono, RECURSOS_PROYECTO_A.reglamentoPdf, "Reglamento_Alpha.pdf", env);
+      await enviarImagen(telefono, RECURSOS_PROYECTO_A.planoImg, "Plano de Lotes Alpha", env);
+      break;
+
+    // --- FLUJO SOPORTE Y LEAD ---
+    case 'alpha_asesor':
+    case 'soporte_humano':
+      const area = id === 'alpha_asesor' ? 'Ventas Alpha' : 'Soporte General';
+      const memoria = await obtenerMemoriaUsuario(telefono, env) || {};
+      memoria.paso = 'esperando_nombre_lead';
+      memoria.areaConsulta = area;
+      await guardarMemoriaUsuario(telefono, memoria, env);
+      await enviarTexto(telefono, `👋 Para comunicarte con un asesor de *${area}*, indícanos tu *Nombre y Apellido*:`, env);
+      break;
+
+    default:
+      await enviarMenuPrincipal(telefono, env);
+      break;
+  }
+}
+
+async function enviarMenuPrincipal(telefono, env) {
+  await enviarMenuLista(
+    telefono,
+    "Empresa Genérica S.A.",
+    "👋 ¡Hola! Bienvenido a nuestro sistema de autogestión. Selecciona una opción:",
+    "Ver Menú 📋",
+    "Servicios Disponibles",
+    [
+      { id: "menu_proyectos", title: "🏢 Proyectos y Ventas", description: "Conoce nuestros desarrollos" },
+      { id: "servicios_financieros", title: "💳 Servicios", description: "Gestión de cuenta y finanzas" },
+      { id: "soporte_humano", title: "🙋 Soporte Humano", description: "Hablar con un representante" }
+    ],
+    env
+  );
+}
+
+// ==========================================
+// 7. ADAPTADORES META (WHATSAPP API)
+// ==========================================
+async function hacerPeticionMeta(payload, env) {
+  if (!env.PHONE_NUMBER_ID || !env.META_TOKEN) return false;
+  try {
+    const res = await fetch(`https://graph.facebook.com/v20.0/${env.PHONE_NUMBER_ID}/messages`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${env.META_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return res.ok;
+  } catch (err) {
+    console.error("Meta Network Error:", err);
+    return false;
+  }
+}
+
+async function enviarTexto(to, texto, env) {
+  return await hacerPeticionMeta({ messaging_product: 'whatsapp', to, type: 'text', text: { body: texto } }, env);
+}
+
+async function enviarImagen(to, link, caption, env) {
+  return await hacerPeticionMeta({ messaging_product: 'whatsapp', to, type: 'image', image: { link, caption } }, env);
+}
+
+async function enviarDocumento(to, link, filename, env) {
+  return await hacerPeticionMeta({ messaging_product: 'whatsapp', to, type: 'document', document: { link, filename } }, env);
+}
+
+async function enviarBotonEnlace(to, bodyText, buttonText, url, env) {
+  return await hacerPeticionMeta({
+    messaging_product: "whatsapp", to, type: "interactive",
+    interactive: {
+      type: "cta_url",
+      body: { text: bodyText },
+      action: { name: "cta_url", parameters: { display_text: buttonText, url } }
+    }
+  }, env);
+}
+
+async function enviarMenuLista(to, headerText, bodyText, buttonText, sectionTitle, options, env) {
+  const rows = options.map(o => ({ id: o.id, title: o.title.slice(0, 24), ...(o.description && { description: o.description.slice(0, 72) }) }));
+  return await hacerPeticionMeta({
+    messaging_product: "whatsapp", to, type: "interactive",
+    interactive: {
+      type: "list",
+      header: { type: "text", text: headerText },
+      body: { text: bodyText },
+      action: { button: buttonText.slice(0, 20), sections: [{ title: sectionTitle.slice(0, 24), rows }] }
+    }
+  }, env);
+}
+
+// ==========================================
+// 8. OMNICHANNEL TELEGRAM FORUMS INTEGRATION
+// ==========================================
+async function derivarAAsesor(telefono, area, contexto, env) {
+  await enviarTexto(telefono, `Conectando con un agente de *${area}*...`, env);
+  
+  const threadId = await crearHiloTelegram(`${area} | ${telefono}`, env);
+  if (threadId && env.ESTADO_BOT) await env.ESTADO_BOT.put(`tg_thread_${threadId}`, telefono, { expirationTtl: 86400 });
+  await guardarMemoriaUsuario(telefono, { paso: 'modo_humano', hiloTelegram: threadId }, env);
+
+  await enviarTexto(telefono, "✅ ¡Listo! Puedes escribir tu consulta aquí.", env);
+  await enviarATelegram(`🚨 *NUEVA ATENCIÓN*\n👤 *Tlf:* \`${telefono}\`\n📂 *Área:* ${area}\n\n${contexto}\n\n_Usa /finalizar para cerrar._`, threadId, env);
+}
+
+async function crearHiloTelegram(name, env) {
+  if (!env.TELEGRAM_TOKEN || !env.TELEGRAM_CHAT_ID) return null;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/createForumTopic`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, name: name.slice(0, 128) })
+    });
+    const data = await res.json();
+    return data.ok ? data.result.message_thread_id : null;
+  } catch (e) { return null; }
+}
+
+async function cerrarHiloTelegram(threadId, env) {
+  if (!threadId || !env.TELEGRAM_TOKEN || !env.TELEGRAM_CHAT_ID) return;
+  fetch(`https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/closeForumTopic`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, message_thread_id: threadId })
+  }).catch(() => {});
+}
+
+async function enviarATelegram(text, threadId, env) {
+  if (!env.TELEGRAM_TOKEN || !env.TELEGRAM_CHAT_ID) return null;
+  const body = { chat_id: env.TELEGRAM_CHAT_ID, text, parse_mode: 'Markdown', ...(threadId && { message_thread_id: threadId }) };
+  return (await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/sendMessage`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  })).json();
+}
+
+async function reenviarMensajeUsuarioATelegram(telefono, texto, threadId, env) {
+  const res = await enviarATelegram(`👤 *Mensaje de \`${telefono}\`:*\n\n${texto}`, threadId, env);
+  if (res?.result?.message_id && env.ESTADO_BOT) await env.ESTADO_BOT.put(`tg_msg_${res.result.message_id}`, telefono, { expirationTtl: 86400 });
+}
+
+async function procesarMensajeTelegram(data, env) {
+  const msg = data.message;
+  if (!msg?.text || String(msg.chat.id) !== env.TELEGRAM_CHAT_ID) return;
+
+  const threadId = msg.message_thread_id;
+  let telefono = (msg.reply_to_message && env.ESTADO_BOT) ? await env.ESTADO_BOT.get(`tg_msg_${msg.reply_to_message.message_id}`) : null;
+  if (!telefono && threadId && env.ESTADO_BOT) telefono = await env.ESTADO_BOT.get(`tg_thread_${threadId}`);
+  if (!telefono) return;
+
+  if (['/finalizar', '/cerrar'].includes(msg.text.trim().toLowerCase())) {
+    await enviarTexto(telefono, "✅ *Atención Finalizada*\nGracias por comunicarte.", env);
+    await limpiarMemoria(telefono, env);
+    await enviarMenuPrincipal(telefono, env);
+    await enviarATelegram("🔒 *Conversación finalizada.*", threadId, env);
+    await cerrarHiloTelegram(threadId, env);
+    return;
+  }
+  await enviarTexto(telefono, msg.text, env);
+}
+
+// ==========================================
+// 9. PERSISTENCIA D1 (SQL) y KV (Key-Value)
+// ==========================================
+async function registrarPasoHistorial(telefono, accion, env) {
+  const memoria = await obtenerMemoriaUsuario(telefono, env) || {};
+  memoria.historial = memoria.historial || [];
+  if (memoria.historial[memoria.historial.length - 1] !== accion) memoria.historial.push(accion);
+  if (memoria.historial.length > 5) memoria.historial.shift(); // Keep last 5 steps
+  await guardarMemoriaUsuario(telefono, memoria, env);
+}
+
+async function obtenerMemoriaUsuario(telefono, env) {
+  try { return env.ESTADO_BOT ? await env.ESTADO_BOT.get(telefono, "json") : null; } catch (e) { return null; }
+}
+
+async function guardarMemoriaUsuario(telefono, datos, env) {
+  try { if (env.ESTADO_BOT) await env.ESTADO_BOT.put(telefono, JSON.stringify(datos), { expirationTtl: 3600 }); } catch (e) {}
+}
+
+async function limpiarMemoria(telefono, env) {
+  try { if (env.ESTADO_BOT) await env.ESTADO_BOT.delete(telefono); } catch (e) {}
+}
+
+async function registrarLog(telefono, evento, detalle, env) {
+  if (!env.DB_LOGS) return; // DB_LOGS is a Cloudflare D1 binding
+  try {
+    await env.DB_LOGS.prepare("INSERT INTO logs (telefono, evento, detalle) VALUES (?, ?, ?)").bind(telefono, evento, detalle).run();
+  } catch (err) {
+    console.error('[DB ERROR]:', err.message);
+  }
+}
