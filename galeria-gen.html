@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- [PORTFOLIO] Meta tags para demostración de UI/UX -->
+<title>Galería Interactiva | Portfolio Demo</title>
+<meta name="description" content="Demo de galería inmersiva estilo 'Stories' construida con Vanilla JS, soporte táctil y CSS Transitions.">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* [PORTFOLIO] Uso de CSS Custom Properties para un fácil theming */
+  :root {
+    --negro: #0B0B0A;
+    --blanco: #F7F5F1;
+    --arena: #B9AE9B;
+    --linea: rgba(247,245,241,0.18);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; }
+  body {
+    background: var(--negro);
+    color: var(--blanco);
+    font-family: 'Inter', sans-serif;
+    overflow: hidden; /* Previene scroll durante la vista inmersiva */
+  }
+
+  /* ---------- TOP BAR ---------- */
+  .topbar {
+    position: fixed; top:0; left:0; right:0;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 22px 4vw;
+    z-index: 50;
+    font-size: 0.78rem;
+    letter-spacing: 0.02em;
+    color: var(--blanco);
+  }
+  .topbar span { opacity: 0.8; }
+  .topbar .counter { font-variant-numeric: tabular-nums; }
+  .home-btn {
+    background: none; border: none; color: inherit; font-size: inherit;
+    cursor: pointer; opacity: 0.8; transition: opacity .2s;
+  }
+  .home-btn:hover { opacity: 1; text-decoration: underline; }
+
+  /* ---------- MAIN STAGE (SLIDER) ---------- */
+  .stage {
+    position: relative;
+    height: 100vh;
+    width: 100vw;
+  }
+  .slide {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    visibility: hidden;
+    /* [PORTFOLIO] Transiciones fluidas usando cubic-bezier para sensación cinemática */
+    transition: opacity 1s cubic-bezier(.22,.61,.36,1); 
+  }
+  .slide.active {
+    opacity: 1;
+    visibility: visible;
+    z-index: 1;
+  }
+  .slide img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transform: scale(1.06); /* Efecto Ken Burns inicial */
+    transition: transform 6s cubic-bezier(.22,.61,.36,1);
+  }
+  .slide.active img {
+    transform: scale(1);
+  }
+  /* Viñeta para legibilidad del texto sobre imágenes claras */
+  .slide::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0) 22%, rgba(0,0,0,0) 72%, rgba(0,0,0,0.55) 100%);
+    pointer-events: none;
+  }
+
+  .slide-caption {
+    position: absolute;
+    left: 4vw; bottom: 6vh;
+    z-index: 2;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .slide-caption .proyecto {
+    font-family: 'Fraunces', serif; font-weight: 400; font-size: 1.4rem;
+  }
+  .slide-caption .detalle {
+    font-size: 0.78rem; color: var(--arena);
+  }
+
+  /* ---------- ARROWS ---------- */
+  .nav-arrow {
+    position: absolute; top:0; bottom:0; width: 14%;
+    display: flex; align-items: center; z-index: 10;
+    cursor: pointer; background: transparent; border: none;
+  }
+  .nav-arrow.prev { left:0; justify-content: flex-start; padding-left: 2vw; }
+  .nav-arrow.next { right:0; justify-content: flex-end; padding-right: 2vw; }
+  .nav-arrow svg {
+    width: 22px; height: 22px; opacity: 0;
+    transition: opacity .3s ease, transform .3s ease;
+    stroke: var(--blanco);
+  }
+  .nav-arrow:hover svg { opacity: 0.85; }
+  .nav-arrow.prev:hover svg { transform: translateX(-4px); }
+  .nav-arrow.next:hover svg { transform: translateX(4px); }
+
+  /* ---------- PROGRESS DOTS ---------- */
+  .progress {
+    position: fixed; left: 4vw; top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; gap: 10px; z-index: 50;
+  }
+  .progress button {
+    width: 5px; height: 5px; border-radius: 50%; border: none;
+    background: var(--linea); cursor: pointer;
+    transition: background .3s ease, transform .3s ease; padding: 0;
+  }
+  .progress button.active {
+    background: var(--blanco); transform: scale(1.6);
+  }
+
+  /* ---------- FILMSTRIP (Stories style progress) ---------- */
+  .filmstrip {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    display: flex; gap: 6px; padding: 0 4vw 0; height: 4px; z-index: 50;
+  }
+  .filmstrip .seg {
+    flex: 1; background: var(--linea); position: relative; overflow: hidden;
+  }
+  .filmstrip .seg .fill {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 0%;
+    background: var(--blanco);
+  }
+  .filmstrip .seg.done .fill { width: 100%; }
+
+  /* ---------- INTRO OVERLAY & CSS GRID ---------- */
+  .intro-overlay {
+    position: fixed; inset: 0;
+    background: var(--negro);
+    z-index: 200;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 6vw; gap: 40px; text-align: center;
+    transition: opacity .6s ease, visibility .6s ease;
+  }
+  .intro-overlay.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+  
+  .intro-header h1 {
+    font-family: 'Fraunces', serif; font-weight: 300;
+    font-size: clamp(1.8rem, 3.5vw, 2.8rem); line-height: 1.15; margin-bottom: 10px;
+  }
+  .intro-header p { font-size: 0.85rem; color: var(--arena); }
+
+  /* [PORTFOLIO] Grid Layout responsive */
+  .projects-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;
+    width: 100%; max-width: 980px;
+  }
+  .grid-card {
+    background: rgba(247,245,241,0.03); border: 1px solid var(--linea); border-radius: 12px;
+    padding: 32px 24px; text-align: left; cursor: pointer;
+    display: flex; flex-direction: column; justify-content: space-between;
+    min-height: 180px; transition: background .3s ease, border-color .3s ease, transform .3s ease;
+  }
+  .grid-card:hover {
+    background: rgba(247,245,241,0.08); border-color: var(--blanco); transform: translateY(-4px);
+  }
+  .grid-card h3 {
+    font-family: 'Fraunces', serif; font-weight: 400; font-size: 1.35rem;
+    color: var(--blanco); margin-bottom: 8px;
+  }
+  .grid-card span { font-size: 0.75rem; color: var(--arena); line-height: 1.4; }
+  .grid-card .action-label {
+    margin-top: auto; padding-top: 20px; font-size: 0.72rem;
+    letter-spacing: 0.05em; text-transform: uppercase; color: var(--blanco); opacity: 0.7;
+  }
+
+  /* ---------- END SLIDE (Call to Action) ---------- */
+  .slide.end-slide {
+    background: var(--negro); display: flex; align-items: center; justify-content: center;
+  }
+  .slide.end-slide .end-inner {
+    text-align: center; display: flex; flex-direction: column; gap: 22px; align-items: center;
+  }
+  .end-inner h2 {
+    font-family: 'Fraunces', serif; font-weight: 300;
+    font-size: clamp(1.6rem, 4vw, 2.6rem); max-width: 16ch;
+  }
+  .end-inner a {
+    color: var(--negro); background: var(--blanco); text-decoration: none;
+    padding: 14px 30px; border-radius: 100px; font-size: 0.85rem;
+    transition: transform 0.2s ease;
+  }
+  .end-inner a:hover { transform: scale(1.05); }
+
+  @media (max-width: 840px) {
+    .projects-grid { grid-template-columns: 1fr; max-width: 400px; }
+    .grid-card { min-height: 130px; padding: 20px; }
+    .slide-caption { left: 6vw; bottom: 9vh; }
+    .progress { left: 6vw; }
+    .filmstrip { padding: 0 6vw; }
+    .nav-arrow { width: 22%; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Pantalla Inicial de Selección -->
+<div class="intro-overlay" id="intro">
+  <div class="intro-header">
+    <h1>Portafolio de Desarrollos</h1>
+    <p>Seleccioná el proyecto que querés recorrer:</p>
+  </div>
+  <div class="projects-grid">
+    <div class="grid-card" data-project-key="alpha">
+      <div>
+        <h3>Proyecto Alpha</h3>
+        <span>Residencias premium y espacios verdes</span>
+      </div>
+      <div class="action-label">Ver galería →</div>
+    </div>
+    <div class="grid-card" data-project-key="beta">
+      <div>
+        <h3>Desarrollo Beta</h3>
+        <span>Barrio cerrado con amenities exclusivas</span>
+      </div>
+      <div class="action-label">Ver galería →</div>
+    </div>
+    <div class="grid-card" data-project-key="gamma">
+      <div>
+        <h3>Complejo Gamma</h3>
+        <span>Dúplex y lotes de alta valorización</span>
+      </div>
+      <div class="action-label">Ver galería →</div>
+    </div>
+  </div>
+</div>
+
+<!-- Interfaz de la Galería Inmersiva -->
+<div class="topbar">
+  <button class="home-btn" id="homeBtn">← Volver al Menú</button>
+  <span id="projectName">Proyecto Alpha</span>
+  <span class="counter" id="counter">01 / 10</span>
+</div>
+
+<div class="progress" id="progress"></div>
+
+<div class="stage" id="stage">
+  <button class="nav-arrow prev" id="prevBtn" aria-label="Anterior">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+  </button>
+  <button class="nav-arrow next" id="nextBtn" aria-label="Siguiente">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+  </button>
+</div>
+
+<div class="filmstrip" id="filmstrip"></div>
+
+<!-- [PORTFOLIO] Vanilla JS Logic -->
+<script>
+// 1. DATA LAYER: Estructura de datos limpia y escalable
+const proyectos = [
+  {
+    key: "alpha",
+    nombre: "Proyecto Alpha",
+    ubicacion: "Zona Norte, Distrito Residencial",
+    fotos: [
+      { src: "https://dummyimage.com/1920x1080/2c3e50/fff&text=Fachada+Principal", detalle: "Entrada Principal" },
+      { src: "https://dummyimage.com/1920x1080/34495e/fff&text=Acceso+Seguridad", detalle: "Control de Acceso" },
+      { src: "https://dummyimage.com/1920x1080/2c3e50/fff&text=Modelo+Premium", detalle: "Vista exterior frontal" },
+      { src: "https://dummyimage.com/1920x1080/34495e/fff&text=Interiores", detalle: "Interior planta baja" }
+    ]
+  },
+  {
+    key: "beta",
+    nombre: "Desarrollo Beta",
+    ubicacion: "Corredor Verde, Zona Oeste",
+    fotos: [
+      { src: "https://dummyimage.com/1920x1080/16a085/fff&text=Portal+Acceso", detalle: "Portal de acceso" },
+      { src: "https://dummyimage.com/1920x1080/1abc9c/fff&text=Vista+Aerea", detalle: "Vista general de lotes" },
+      { src: "https://dummyimage.com/1920x1080/16a085/fff&text=Amenities", detalle: "Club House" }
+    ]
+  },
+  {
+    key: "gamma",
+    nombre: "Complejo Gamma",
+    ubicacion: "Centro Cívico, Capital",
+    fotos: [
+      { src: "https://dummyimage.com/1920x1080/8e44ad/fff&text=Entrada+Gamma", detalle: "Acceso principal" },
+      { src: "https://dummyimage.com/1920x1080/9b59b6/fff&text=Paisajismo", detalle: "Entorno natural y parques" }
+    ]
+  }
+];
+
+// 2. STATE MANAGEMENT: Aplanar datos para el slider continuo
+const slidesData = [];
+proyectos.forEach((p, pi) => {
+  p.fotos.forEach((f, fi) => {
+    slidesData.push({ 
+      ...f, 
+      proyecto: p.nombre, 
+      projKey: p.key, 
+      ubicacion: p.ubicacion, 
+      projIndex: pi, 
+      isFirstOfProject: fi === 0 
+    });
+  });
+});
+
+// Nodos del DOM
+const stage = document.getElementById('stage');
+const progressEl = document.getElementById('progress');
+const filmstripEl = document.getElementById('filmstrip');
+const projectNameEl = document.getElementById('projectName');
+const counterEl = document.getElementById('counter');
+const introEl = document.getElementById('intro');
+
+// 3. DOM GENERATION: Creación dinámica de las vistas
+slidesData.forEach((s, i) => {
+  const div = document.createElement('div');
+  div.className = 'slide';
+  div.dataset.index = i;
+  div.innerHTML = `
+    <img src="${s.src}" alt="${s.proyecto} - ${s.detalle}">
+    <div class="slide-caption">
+      <div class="proyecto">${s.proyecto}</div>
+      <div class="detalle">${s.detalle ? s.detalle + ' — ' : ''}${s.ubicacion}</div>
+    </div>
+  `;
+  stage.insertBefore(div, document.getElementById('prevBtn'));
+});
+
+// Slide Final (Call to Action)
+const endDiv = document.createElement('div');
+endDiv.className = 'slide end-slide';
+endDiv.dataset.index = slidesData.length;
+endDiv.innerHTML = `
+  <div class="end-inner">
+    <h2>¿Querés recorrer alguno de estos proyectos en persona?</h2>
+    <a href="#" target="_blank" rel="noopener">Contactar a un asesor</a>
+  </div>
+`;
+stage.insertBefore(endDiv, document.getElementById('prevBtn'));
+
+const totalSlides = slidesData.length + 1;
+
+// Generar navegadores visuales (Dots & Filmstrip)
+proyectos.forEach((p, pi) => {
+  const dot = document.createElement('button');
+  dot.title = p.nombre;
+  dot.addEventListener('click', () => {
+    const targetIndex = slidesData.findIndex(s => s.projIndex === pi);
+    if (targetIndex !== -1) goTo(targetIndex);
+  });
+  progressEl.appendChild(dot);
+});
+
+slidesData.forEach(() => {
+  const seg = document.createElement('div');
+  seg.className = 'seg';
+  seg.innerHTML = '<div class="fill"></div>';
+  filmstripEl.appendChild(seg);
+});
+
+// 4. LOGIC & RENDER LOOP
+let current = 0;
+const allSlides = document.querySelectorAll('.slide');
+const dots = document.querySelectorAll('.progress button');
+const segs = document.querySelectorAll('.filmstrip .seg');
+
+function render(){
+  // Actualizar UI activa
+  allSlides.forEach((s, i) => s.classList.toggle('active', i === current));
+
+  if(current < slidesData.length){
+    const s = slidesData[current];
+    projectNameEl.textContent = s.proyecto;
+    counterEl.textContent = String(current+1).padStart(2,'0') + ' / ' + String(slidesData.length).padStart(2,'0');
+    dots.forEach((d,i) => d.classList.toggle('active', i === s.projIndex));
+  } else {
+    // Estado para el slide final (CTA)
+    projectNameEl.textContent = 'Contacto';
+    counterEl.textContent = '';
+    dots.forEach(d => d.classList.remove('active'));
+  }
+
+  // Actualizar barra de progreso estilo "Stories"
+  segs.forEach((seg,i) => {
+    seg.classList.toggle('done', i <= current && current < slidesData.length ? i <= current : i < slidesData.length);
+  });
+}
+
+function goTo(i){
+  current = Math.max(0, Math.min(totalSlides-1, i));
+  render();
+}
+
+// 5. EVENT LISTENERS: Mouse, Keyboard y Touch
+// Selección desde la grilla
+document.querySelectorAll('.grid-card').forEach(card => {
+  card.addEventListener('click', () => {
+    const key = card.dataset.projectKey;
+    const targetIndex = slidesData.findIndex(s => s.projKey === key);
+    if(targetIndex !== -1) {
+      goTo(targetIndex);
+    }
+    introEl.classList.add('hidden'); // Ocultar intro, revelar galería
+  });
+});
+
+document.getElementById('homeBtn').addEventListener('click', () => {
+  introEl.classList.remove('hidden');
+});
+
+document.getElementById('nextBtn').addEventListener('click', () => goTo(current+1));
+document.getElementById('prevBtn').addEventListener('click', () => goTo(current-1));
+
+// Navegación por teclado (Accesibilidad)
+document.addEventListener('keydown', (e) => {
+  if(introEl.classList.contains('hidden')) {
+    if(e.key === 'ArrowRight') goTo(current+1);
+    if(e.key === 'ArrowLeft') goTo(current-1);
+  }
+});
+
+// Soporte para gestos táctiles (Swipe en móviles)
+let touchX = null;
+stage.addEventListener('touchstart', (e) => touchX = e.touches[0].clientX);
+stage.addEventListener('touchend', (e) => {
+  if(touchX === null) return;
+  const dx = e.changedTouches[0].clientX - touchX;
+  if(dx > 50) goTo(current-1); // Swipe Right -> Prev
+  if(dx < -50) goTo(current+1); // Swipe Left -> Next
+  touchX = null;
+});
+
+// Inicialización
+render();
+</script>
+</body>
+</html>
