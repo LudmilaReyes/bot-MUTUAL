@@ -6,6 +6,7 @@ Corre sobre **Cloudflare Workers** (sin servidores propios) y usa la **API ofici
 
 > Proyecto desarrollado de forma individual durante mi trabajo en la Mutual de Empleados del Banco de la Nación Argentina (2026).
 
+<img width="885" height="679" alt="image" src="https://github.com/user-attachments/assets/7a1846d9-5d99-4df1-bfda-c1732446a15e" />
 
 
 ## 🎯 Problema que resuelve
