@@ -151,7 +151,7 @@ function handleVerify(request, env) {
 
 async function verificarFirmaMeta(request, bodyTexto, env) {
   const signature = request.headers.get('X-Hub-Signature-256');
-  if (!signature || !env.META_APP_SECRET) return true;
+  if (!signature || !env.META_APP_SECRET) return false;
 
   try {
     const encoder = new TextEncoder();
