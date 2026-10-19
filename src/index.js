@@ -633,7 +633,6 @@ async function presentarCepasDeJunin(telefono, env) {
     "🛡️ Seguridad 24/7\n" +
     "🌳 100% espacios verdes";
 
-  // Siempre enviar texto primero garantiza la entrega si falla la imagen
   await enviarTexto(telefono, encabezado, env);
   try { await enviarImagen(telefono, RECURSOS_JUNIN.portada, "Cepas de Junín", env); } catch (e) {}
 
@@ -688,15 +687,12 @@ async function presentarModeloDuplex(telefono, env) {
     "🔑 *Modalidad:* Entrega 100% llave en mano.\n\n" +
     "Vivir en Cepas de Junín es disfrutar de la tranquilidad con la seguridad de un barrio privado.";
 
-  // Enviamos la imagen proxy (para evitar el bloqueo del .jfif) adjuntando todo el texto como Caption
   const imagenEnviada = await enviarImagen(telefono, RECURSOS_JUNIN.duplexImg, fichaDuplex, env);
-  
-  // Fallback: Si Meta rechaza la imagen por algún motivo de red, aseguramos que el cliente reciba el texto
+ 
   if (!imagenEnviada) {
     await enviarTexto(telefono, fichaDuplex, env);
   }
 
-  // Agregamos el llamado a la acción hacia la galería web
   await enviarBotonEnlace(
     telefono,
     "¿Querés ver más fotos de los interiores, patios y el avance de obra? Recorré nuestra galería interactiva:",
@@ -705,7 +701,6 @@ async function presentarModeloDuplex(telefono, env) {
     env
   );
 
-  // Menú de siguientes pasos
   await enviarMenuLista(
     telefono,
     "Acciones Dúplex",
@@ -735,15 +730,13 @@ async function presentarModeloCasa(telefono, env) {
     "🔑 *Modalidad:* Entrega 100% llave en mano.\n\n" +
     "El balance perfecto entre confort e inversión patrimonial segura.";
 
-  // 1. Usamos la imagen PROXY (.casaImg) para evitar el bloqueo del .jfif y pasamos el texto como caption
-  const imagenEnviada = await enviarImagen(telefono, RECURSOS_JUNIN.casaImg, fichaCasa, env);
   
-  // 2. Fallback de seguridad: Si Meta falla por red, el usuario recibe igual la información
+  const imagenEnviada = await enviarImagen(telefono, RECURSOS_JUNIN.casaImg, fichaCasa, env);
+
   if (!imagenEnviada) {
     await enviarTexto(telefono, fichaCasa, env);
   }
 
-  // 3. CTA a la galería
   await enviarBotonEnlace(
     telefono,
     "¿Querés ver fotos de los interiores y cómo avanza la obra de este modelo? Recorré nuestra galería interactiva:",
@@ -752,7 +745,6 @@ async function presentarModeloCasa(telefono, env) {
     env
   );
 
-  // 4. Siguientes pasos
   await enviarMenuLista(
     telefono,
     "Acciones Casa",
@@ -847,9 +839,6 @@ async function presentarLotesAlamos(telefono, env) {
   ], env);
 }
 
-// ==========================================
-// MÉTODOS SIMPLIFICADOS PARA BONARDA, ANCELLOTTA Y RUSSELL
-// ==========================================
 async function presentarCepasDeBonarda(telefono, env) {
   await enviarTexto(telefono, "🍇 *Cepas de Bonarda*\n\n40 lotes a 200m de RN 7. Strip center y vigilancia 24/7.", env);
   try { await enviarImagen(telefono, RECURSOS_BONARDA.portada, "Bonarda", env); } catch (e) {}
@@ -1005,10 +994,10 @@ async function cerrarHiloTelegram(threadId, env) {
   try { await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/closeForumTopic`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, message_thread_id: threadId }) }); } catch (e) {}
 }
 
-async function reenviarAudioATelegram(telefono, mediaId, threadId, env) { /* Mismo código nativo omitido por brevedad visual, asume lógica intacta */ }
-async function enviarATelegram(texto, threadId, env) { /* Lógica intacta */ }
-async function reenviarMensajeUsuarioATelegram(telefono, texto, threadId, env) { /* Lógica intacta */ }
-async function procesarMensajeTelegram(data, env) { /* Lógica intacta */ }
+async function reenviarAudioATelegram(telefono, mediaId, threadId, env) 
+async function enviarATelegram(texto, threadId, env)
+async function reenviarMensajeUsuarioATelegram(telefono, texto, threadId, env) 
+async function procesarMensajeTelegram(data, env) 
 
 // ==========================================
 // 9. PERSISTENCIA SEGURA (KV / D1)
@@ -1045,8 +1034,8 @@ async function registrarLog(telefono, evento, detalle, env) {
 // ==========================================
 // 10. MÓDULOS TURISMO Y SEGUROS (RESUMIDOS)
 // ==========================================
-async function presentarModuloTurismo(telefono, env) { /* Lógica intacta */ }
-async function presentarConveniosTurismo(telefono, env) { /* Lógica intacta */ }
-async function solicitarNombreTurismo(telefono, destino, env) { /* Lógica intacta */ }
-async function presentarModuloSeguros(telefono, env) { /* Lógica intacta */ }
-async function iniciarCotizacionSeguro(telefono, ramo, env) { /* Lógica intacta */ }
+async function presentarModuloTurismo(telefono, env) 
+async function presentarConveniosTurismo(telefono, env) 
+async function solicitarNombreTurismo(telefono, destino, env) 
+async function presentarModuloSeguros(telefono, env) 
+async function iniciarCotizacionSeguro(telefono, ramo, env) 
